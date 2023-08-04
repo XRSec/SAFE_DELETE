@@ -1,4 +1,5 @@
 # SAFE DELETE
+
 安全的删除文件/文件夹
 
 ## Example
@@ -13,3 +14,13 @@ sudo chmod +x /usr/local/bin/rmf
 # ~/.zshrc
 alias rm="echo 'use rmf'; rmf"
 ```
+
+## [Trash](https://command-not-found.com/trash-empty)
+
+```bash
+apt/yum/brew/dnf install trash-cli
+
+trash-empty
+```
+
+                       
