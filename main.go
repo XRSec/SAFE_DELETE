@@ -41,7 +41,7 @@ var rootCmd = &cobra.Command{
 				log.Infof("确认删除文件: %s", v)
 				var input string
 				if _, err := fmt.Scanln(&input); err != nil {
-					log.Errorf("Error: %v", err)
+					log.Errorf("获取输入失败: %v", err)
 					return
 				}
 				if input != "y" && input != "Y" {
@@ -50,7 +50,7 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			if err := wastebasket.Trash(v); err != nil {
-				log.Errorf("Error: %v", err)
+				log.Errorf("删除文件失败: %v err:%v", v, err)
 				return
 			}
 			if verbose {
