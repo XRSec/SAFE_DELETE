@@ -23,7 +23,6 @@ var rootCmd = &cobra.Command{
 	Version: versionData,
 
 	Run: func(cmd *cobra.Command, args []string) {
-		log.Println(args)
 		for _, v := range args {
 			if _, err := os.Stat(v); err != nil {
 				if os.IsNotExist(err) {
