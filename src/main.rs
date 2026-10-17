@@ -40,14 +40,47 @@ struct Args {
     paths: Vec<PathBuf>,
 }
 
-fn create_trash_context() -> trash::TrashContext {
-    #[allow(unused_mut)]
-    let mut trash_ctx = trash::TrashContext::default();
+#[cfg(target_os = "macos")]
+fn play_trash_sound() {
+    const SOUND_PATH: &str =
+        "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/finder/move to trash.aif";
+    if Path::new(SOUND_PATH).exists() {
+        let _ = std::process::Command::new("afplay")
+            .arg(SOUND_PATH)
+            .spawn();
+    }
+}
+
+fn trash_item(path: &Path, played_sound: &mut bool) -> Result<(), trash::Error> {
     #[cfg(target_os = "macos")]
     {
-        trash_ctx.set_delete_method(DeleteMethod::NsFileManager);
+        // 软链接直接走 NsFileManager，避免 Finder AppleScript 缺陷（-5000 错误/超时）
+        // 普通文件/目录优先尝试 Finder，保留原生音效和"放回原处"能力
+        if !path.is_symlink() {
+            let mut finder_ctx = trash::TrashContext::default();
+            finder_ctx.set_delete_method(DeleteMethod::Finder);
+            if finder_ctx.delete(path).is_ok() {
+                *played_sound = true;
+                return Ok(());
+            }
+        }
+
+        let mut nsfm_ctx = trash::TrashContext::default();
+        nsfm_ctx.set_delete_method(DeleteMethod::NsFileManager);
+        nsfm_ctx.delete(path)?;
+
+        if !*played_sound {
+            play_trash_sound();
+            *played_sound = true;
+        }
+        Ok(())
     }
-    trash_ctx
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = played_sound;
+        trash::delete(path)
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -71,7 +104,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let trash_ctx = create_trash_context();
+    let mut played_sound = false;
     let mut failed = false;
 
     for raw_path in &args.paths {
@@ -96,7 +129,7 @@ fn main() -> ExitCode {
             continue;
         }
 
-        if let Err(err) = trash_ctx.delete(&path) {
+        if let Err(err) = trash_item(&path, &mut played_sound) {
             eprintln!("rmf: 删除文件失败: {}: {err}", raw_path.display());
             failed = true;
             continue;
@@ -167,8 +200,8 @@ mod tests {
         assert_eq!(normalized, link_dir);
         assert!(normalized.symlink_metadata().is_ok());
 
-        let ctx = create_trash_context();
-        assert!(ctx.delete(&normalized).is_ok());
+        let mut played_sound = false;
+        assert!(trash_item(&normalized, &mut played_sound).is_ok());
 
         // Target directory and its contents must still be intact!
         assert!(target_dir.exists());
@@ -183,7 +216,7 @@ mod tests {
         let broken_slash = PathBuf::from(format!("{}/", broken_link.display()));
         let normalized_broken = normalize_path(&broken_slash);
         assert!(normalized_broken.symlink_metadata().is_ok());
-        assert!(ctx.delete(&normalized_broken).is_ok());
+        assert!(trash_item(&normalized_broken, &mut played_sound).is_ok());
         assert!(normalized_broken.symlink_metadata().is_err());
 
         let _ = fs::remove_dir_all(&base);
