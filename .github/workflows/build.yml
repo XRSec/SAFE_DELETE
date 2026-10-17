@@ -3,59 +3,100 @@ name: Build
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+    tags:
+      - "*"
   watch:
     types: [started]
 
+permissions:
+  contents: write
+
 jobs:
-  Build:
-    name: Build
+  create-release:
+    name: Create Release
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tagID.outputs.dir }}
     steps:
-      -
-        name: Private Actions Checkout
-        uses: actions/checkout@v5
-      -
-        name: set tag
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set tag
         id: tagID
-        run: echo "dir=$(date +'%Y.%m.%d.%H')" >> $GITHUB_OUTPUT
-      -
-        name: Build with xgo
-        uses: crazy-max/ghaction-xgo@v3.2.0
-        with:
-          xgo_version: latest
-          go_version: ${{ matrix.go_version }}
-          dest: bin
-          prefix: rm
-          targets: android/386, android/amd64, android/arm, android/arm64, darwin/amd64, darwin/arm64, freebsd/386, freebsd/amd64, freebsd/arm, freebsd/arm64, linux/386, linux/amd64, linux/arm, linux/arm64, linux/mips, linux/mips64, linux/mips64le, linux/mipsle, linux/ppc64, linux/ppc64le, linux/riscv64, linux/s390x, netbsd/386, netbsd/amd64, netbsd/arm, netbsd/arm64, openbsd/386, openbsd/amd64, openbsd/arm, openbsd/arm64, openbsd/mips64, windows/386, windows/amd64, windows/arm, windows/arm64
-          v: true
-          x: true
-          race: false
-          ldflags: -s -w -X main.versionData=${{ steps.tagID.outputs.dir }}
-          buildmode: default
-          trimpath: true
-      -
-        name: Delete old Releases
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "dir=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "dir=$(date +'%Y.%m.%d.%H')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete old Releases
         uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
           repo: ${{ github.repository }}
           keep_latest: 3
           delete_tag_pattern: ""
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
-      -
-        name: Make release
+          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB || secrets.GITHUB_TOKEN }}
+
+      - name: Make release
         uses: softprops/action-gh-release@v2.3.2
         with:
-          files: "bin/**"
           body_path: README.md
           name: ${{ steps.tagID.outputs.dir }}
           tag_name: ${{ steps.tagID.outputs.dir }}
           draft: false
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB || secrets.GITHUB_TOKEN }}
 
-      -
-        name: Send notification to Feishu
+  build-and-upload:
+    name: Build (${{ matrix.target }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # Linux ARM64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          # macOS Apple Silicon
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # macOS Intel
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and Upload Binary
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: rmf
+          target: ${{ matrix.target }}
+          ref: refs/tags/${{ needs.create-release.outputs.tag }}
+          token: ${{ secrets.TOKEN_GITHUB || secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notify
+    needs: [create-release, build-and-upload]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Send notification to Feishu
         uses: XRSec/feishu-bot-webhook-action@v1
         with:
           FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
